@@ -253,13 +253,13 @@ jobs:
           fetch-depth: 0
 
       - name: Download binary artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: release-ci-binary
           path: release-ci-binary
 
       - name: Download frontend artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: frontend-dist
           path: /tmp/dist
@@ -641,7 +641,7 @@ jobs:
         run: cd tests/ui-testing && npm ci
 
       - name: Download blob reports from GitHub Actions Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           path: tests/ui-testing/all-blob-reports
@@ -775,7 +775,7 @@ jobs:
         run: cd tests/ui-testing && npm ci
 
       - name: Download merged report
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: merged-report-${{ github.run_attempt }}
           path: tests/ui-testing/playwright-results
