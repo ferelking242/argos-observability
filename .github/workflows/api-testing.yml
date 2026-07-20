@@ -160,7 +160,7 @@ jobs:
       # when pytest fails (junit is written before pytest's non-zero exit).
       - name: Upload API junit (integration)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: api-junit__api_integration_tests__main
           path: tests/api-testing/junit-integration.xml
@@ -169,7 +169,7 @@ jobs:
 
       - name: Upload OpenObserve server logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openobserve-server-logs
           path: tests/api-testing/o2_*.log
@@ -283,7 +283,7 @@ jobs:
       # opt-mode legs by test identity so the same suite isn't counted twice.
       - name: Upload API junit (query_agent)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: api-junit__query_agent_tests__${{ matrix.config.label }}
           path: tests/api-testing/junit-queryagent-${{ matrix.config.label }}.xml
@@ -292,7 +292,7 @@ jobs:
 
       - name: Upload server log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openobserve-query-agent-${{ matrix.config.label }}-log
           path: tests/api-testing/o2_query_agent_${{ matrix.config.label }}.log
@@ -404,7 +404,7 @@ jobs:
       # flag-combo legs that re-run the same target files.
       - name: Upload API junit (regression)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: api-junit__api_integration_tests__regression_${{ matrix.config.label }}
           path: tests/api-testing/junit-regression-${{ matrix.config.label }}.xml
@@ -413,7 +413,7 @@ jobs:
 
       - name: Upload server log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: "openobserve-regression-${{ matrix.config.label }}-log"
           path: "tests/api-testing/o2_${{ matrix.config.label }}.log"
@@ -538,7 +538,7 @@ jobs:
 
       - name: Upload OpenObserve server log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openobserve-fuzz-log
           path: tests/api-testing/o2_fuzz.log
