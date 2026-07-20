@@ -1,0 +1,362 @@
+<!-- Copyright 2026 OpenObserve Inc.
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+-->
+
+<template>
+  <div class="m-3 mt-1 max-w-[860px]">
+    <!-- Header -->
+    <div class="flex items-start gap-4 mb-6">
+      <OIcon
+        name="cloud"
+        size="xl"
+        class="flex-shrink-0"
+      />
+      <div>
+        <div class="text-sm font-medium m-0 mb-1" :class="store.state.theme === 'dark' ? 'text-[#e0e0e0]' : 'text-[#1a1a1a]'">
+          Azure Activity Logs
+        </div>
+        <div class="text-sm m-0" :class="store.state.theme === 'dark' ? 'text-[#b0b0b0]' : 'text-[#666]'">
+          Stream Azure subscription activity logs to Argos Observability via Event Hub.
+          The ARM template sets up the Event Hub infrastructure — you then
+          configure Azure to export logs to it.
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 1 -->
+    <div
+      class="mb-4 p-4 rounded border-l-[3px] border-l-solid"
+      :class="store.state.theme === 'dark' ? 'bg-[rgba(255,255,255,0.04)] border-l-[#404040]' : 'bg-[#fafafa] border-l-[#e0e0e0]'"
+    >
+      <div
+        style="
+          display: grid;
+          grid-template-columns: 28px 1fr;
+          gap: 12px;
+          align-items: start;
+        "
+      >
+        <div class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-[0.85rem] shrink-0 bg-[#1976d2] text-white">1</div>
+        <div>
+          <div class="font-semibold mb-1" :class="store.state.theme === 'dark' ? 'text-[#e0e0e0]' : 'text-[#1a1a1a]'">
+            Deploy ARM Template
+          </div>
+          <div class="text-sm m-0 mb-3" :class="store.state.theme === 'dark' ? 'text-[#b0b0b0]' : 'text-[#666]'">
+            Creates an Event Hub namespace, Event Hub, and all required
+            resources in your Azure subscription.
+          </div>
+          <OButton
+            variant="primary"
+            size="sm"
+            @click="handleDeploy"
+            data-test="azure-activity-logs-deploy-btn"
+          >
+            <template #icon-left
+              ><OIcon name="rocket-launch" size="sm"
+            /></template>
+            Deploy to Azure
+          </OButton>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2 -->
+    <div
+      class="mb-4 p-4 rounded border-l-[3px] border-l-solid"
+      :class="store.state.theme === 'dark' ? 'bg-[rgba(255,255,255,0.04)] border-l-[#404040]' : 'bg-[#fafafa] border-l-[#e0e0e0]'"
+    >
+      <div
+        style="
+          display: grid;
+          grid-template-columns: 28px 1fr;
+          gap: 12px;
+          align-items: start;
+        "
+      >
+        <div class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-[0.85rem] shrink-0 bg-[#1976d2] text-white">2</div>
+        <div>
+          <div class="font-semibold mb-1" :class="store.state.theme === 'dark' ? 'text-[#e0e0e0]' : 'text-[#1a1a1a]'">
+            Configure Diagnostic Settings
+          </div>
+          <div class="text-sm mb-3" :class="store.state.theme === 'dark' ? 'text-[#b0b0b0]' : 'text-[#666]'">
+            After the ARM deployment completes, route Activity Logs to the Event
+            Hub that was created.
+          </div>
+
+          <!-- Portal / CLI toggle -->
+          <OToggleGroup v-model="step2Mode" class="mb-4">
+            <OToggleGroupItem value="portal">Azure Portal</OToggleGroupItem>
+            <OToggleGroupItem value="cli">Azure CLI</OToggleGroupItem>
+          </OToggleGroup>
+
+          <!-- Portal instructions -->
+          <div v-if="step2Mode === 'portal'">
+            <ol class="text-sm pl-4 space-y-1" :class="store.state.theme === 'dark' ? 'text-[#b0b0b0]' : 'text-[#666]'">
+              <li>
+                Go to
+                <strong
+                  >Azure Portal → Subscriptions → your subscription</strong
+                >
+              </li>
+              <li>Click <strong>Activity log</strong> in the left menu</li>
+              <li>
+                Click <strong>Export Activity Logs</strong> (or
+                <strong>Diagnostic settings → + Add diagnostic setting</strong>)
+              </li>
+              <li>Enter a name, check the log categories you want to enable</li>
+              <li>
+                Under <strong>Destination details</strong>, choose
+                <strong>Stream to an event hub</strong>
+              </li>
+              <li>
+                Select the Event Hub namespace and Event Hub created in Step 1
+                (prefix: <code>o2-activity</code>)
+              </li>
+              <li>Click <strong>Save</strong></li>
+            </ol>
+          </div>
+
+          <!-- CLI: inputs + generated curl command -->
+          <div v-else>
+            <!-- Categories -->
+            <div class="mb-4">
+              <div class="flex items-center justify-between mb-2">
+                <div class="text-xs font-semibold" :class="store.state.theme === 'dark' ? 'text-[#d0d0d0]' : 'text-[#333]'">
+                  Log categories to enable
+                </div>
+                <div class="flex gap-2">
+                  <OButton
+                    variant="ghost-primary"
+                    size="xs"
+                    @click="
+                      enabledCategories = LOG_CATEGORIES.map((c) => c.value)
+                    "
+                    >Select all</OButton
+                  >
+                  <OButton
+                    variant="ghost-primary"
+                    size="xs"
+                    @click="enabledCategories = []"
+                    >Clear</OButton
+                  >
+                </div>
+              </div>
+              <div
+                style="
+                  display: grid;
+                  grid-template-columns: repeat(4, 1fr);
+                  gap: 4px;
+                  width: 100%;
+                "
+              >
+                <OCheckbox
+                  v-for="cat in LOG_CATEGORIES"
+                  :key="cat.value"
+                  v-model="enabledCategories"
+                  :val="cat.value"
+                  :label="cat.label"
+                />
+              </div>
+            </div>
+
+            <div
+              style="
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 16px;
+                margin-bottom: 16px;
+              "
+            >
+              <div>
+                <div class="text-xs mb-1" :class="store.state.theme === 'dark' ? 'text-[#d0d0d0]' : 'text-[#333]'">
+                  Resource Group
+                </div>
+                <OInput
+                  v-model="resourceGroup"
+                  placeholder="rg-openobserve-activity-logs"
+                  autocomplete="off"
+                  data-test="azure-resource-group-input"
+                />
+              </div>
+              <div>
+                <div class="text-xs mb-1" :class="store.state.theme === 'dark' ? 'text-[#d0d0d0]' : 'text-[#333]'">
+                  Deployment Name
+                </div>
+                <OInput
+                  v-model="deploymentName"
+                  placeholder="o2-activity-20260420"
+                  autocomplete="off"
+                  data-test="azure-deployment-name-input"
+                />
+              </div>
+            </div>
+
+            <div
+              v-if="enabledCategories.length === 0"
+              class="text-sm text-red-500 mb-3"
+            >
+              Select at least one log category above.
+            </div>
+            <div v-else>
+              <div class="text-xs mb-2" :class="store.state.theme === 'dark' ? 'text-[#b0b0b0]' : 'text-[#666]'">
+                Run this command after your ARM deployment completes:
+              </div>
+              <CopyContent
+                :content="curlCommand"
+                data-test="azure-curl-command"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Manual Configuration -->
+    <div class="mt-6">
+      <div class="font-semibold text-sm mb-2" :class="store.state.theme === 'dark' ? 'text-[#d0d0d0]' : 'text-[#333]'">
+        Manual Configuration (for reference)
+      </div>
+      <CopyContent :content="manualContent" />
+    </div>
+  </div>
+</template>
+
+<script lang="ts">
+import { defineComponent, computed, ref } from "vue";
+import OButton from "@/lib/core/Button/OButton.vue";
+import OCheckbox from "@/lib/forms/Checkbox/OCheckbox.vue";
+import OInput from "@/lib/forms/Input/OInput.vue";
+import OIcon from "@/lib/core/Icon/OIcon.vue";
+import { useStore } from "vuex";
+import OToggleGroup from "@/lib/core/ToggleGroup/OToggleGroup.vue";
+import OToggleGroupItem from "@/lib/core/ToggleGroup/OToggleGroupItem.vue";
+import { getEndPoint, getIngestionURL } from "@/utils/zincutils";
+import {
+  generateARMTemplateURL,
+  azureIntegrations,
+} from "@/utils/azureIntegrations";
+import CopyContent from "@/components/CopyContent.vue";
+import segment from "@/services/segment_analytics";
+import { toast } from "@/lib/feedback/Toast/useToast";
+
+const SCRIPT_URL =
+  "https://raw.githubusercontent.com/openobserve/o2-datasource/main/azure/azure_activity_logs/configure-diagnostic-settings.sh";
+
+const LOG_CATEGORIES = [
+  { value: "Administrative", label: "Administrative" },
+  { value: "Security", label: "Security" },
+  { value: "ServiceHealth", label: "Service Health" },
+  { value: "Alert", label: "Alert" },
+  { value: "Recommendation", label: "Recommendation" },
+  { value: "Policy", label: "Policy" },
+  { value: "Autoscale", label: "Autoscale" },
+  { value: "ResourceHealth", label: "Resource Health" },
+];
+
+const activityLogsIntegration = azureIntegrations.find(
+  (i) => i.id === "activity-logs",
+)!;
+
+export default defineComponent({
+  name: "AzureConfig",
+  components: { CopyContent, OToggleGroup, OToggleGroupItem, OButton, OCheckbox, OInput,
+    OIcon,
+},
+  setup() {
+    const store = useStore();
+
+    let endpoint: any = null;
+    try {
+      endpoint = getEndPoint(getIngestionURL());
+    } catch (e) {
+      console.error("Error getting endpoint:", e);
+    }
+
+    const step2Mode = ref<"portal" | "cli">("portal");
+    const enabledCategories = ref<string[]>(LOG_CATEGORIES.map((c) => c.value));
+    const resourceGroup = ref("");
+    const deploymentName = ref("");
+
+    const curlCommand = computed(() => {
+      const rg = resourceGroup.value || "YOUR-RESOURCE-GROUP";
+      const dn = deploymentName.value || "YOUR-DEPLOYMENT-NAME";
+      const cats = enabledCategories.value.join(",");
+      return `curl -s ${SCRIPT_URL} | bash -s -- \\
+  --resource-group "${rg}" \\
+  --deployment-name "${dn}" \\
+  --categories "${cats}"`;
+    });
+
+    const manualContent = computed(() => {
+      const orgId = store.state?.selectedOrganization?.identifier || "";
+      const url = endpoint?.url || "";
+      return `Event Hub → Argos Observability Endpoint: ${url}/azure/${orgId}/default/_event_hub\nAccess Key: [BASIC_PASSCODE]`;
+    });
+
+    const handleDeploy = () => {
+      if (!endpoint?.url) {
+        toast({
+          variant: "error",
+          message: "Invalid ingestion endpoint. Please check configuration.",
+        });
+        return;
+      }
+
+      const organizationId = store.state?.selectedOrganization?.identifier;
+      const email = store.state?.userInfo?.email;
+      const passcode = store.state?.organizationData?.organizationPasscode;
+
+      if (!organizationId || !email || !passcode) {
+        toast({
+          variant: "error",
+          message: "Missing organization credentials. Please refresh the page.",
+        });
+        return;
+      }
+
+      const accessKey = btoa(`${email}:${passcode}`);
+      const endpointUrl = `${endpoint.url}/azure/${organizationId}/default/_event_hub`;
+
+      const url = generateARMTemplateURL(
+        activityLogsIntegration,
+        endpointUrl,
+        accessKey,
+      );
+      window.open(url, "_blank", "noopener,noreferrer");
+
+      segment.track("Azure Activity Logs Deploy Started", {
+        integration_id: "activity-logs",
+      });
+
+      toast({
+        variant: "info",
+        message: "Opening Azure portal to deploy Activity Logs infrastructure",
+      });
+    };
+
+    return {
+      store,
+      LOG_CATEGORIES,
+      step2Mode,
+      enabledCategories,
+      resourceGroup,
+      deploymentName,
+      curlCommand,
+      manualContent,
+      handleDeploy,
+    };
+  },
+});
+</script>

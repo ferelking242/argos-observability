@@ -1,0 +1,1178 @@
+<!-- Copyright 2026 OpenObserve Inc.
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+-->
+
+<template>
+  <ODrawer data-test="traces-analysis-dashboard-drawer"
+    v-model:open="isOpen"
+    :width="80"
+    :title="drawerTitle"
+    @update:open="(v) => !v && onClose()"
+  >
+    <template #header-left>
+      <OIcon name="timeline" size="md" />
+      <!-- Time Range Display: Inline chips -->
+      <div
+        class="flex items-center gap-2 flex-wrap ml-2"
+      >
+        <!-- Baseline Chip -->
+        <div
+          class="time-range-chip baseline-chip flex items-center gap-1 px-2 py-[0.375rem] rounded text-[0.85rem]"
+          :style="{ '--chip-color': chipColors.baseline }"
+        >
+          <span class="uppercase tracking-wide opacity-70"
+            >{{ t('traces.tracesAnalysisDashboard.baseline') }}</span
+          >
+          <span class="whitespace-nowrap text-[0.7rem]">{{
+            formatSmartTimestamp(
+              baselineTimeRange.startTime,
+              baselineTimeRange.endTime,
+            ).start
+          }}</span>
+          <span class="opacity-60 text-[0.65rem]">→</span>
+          <span class="whitespace-nowrap text-[0.7rem]">{{
+            formatSmartTimestamp(
+              baselineTimeRange.startTime,
+              baselineTimeRange.endTime,
+            ).end
+          }}</span>
+        </div>
+
+        <!-- Selected Chip -->
+        <div
+          v-if="hasSelectedTimeRange"
+          class="time-range-chip selected-chip flex items-center gap-1 px-2 py-[0.375rem] rounded text-[0.85rem]"
+          :style="{ '--chip-color': chipColors.selected }"
+        >
+          <span class="uppercase tracking-wide opacity-70"
+            >{{ t('traces.tracesAnalysisDashboard.selected') }}</span
+          >
+          <span class="whitespace-nowrap text-[0.7rem]">{{
+            formatSmartTimestamp(
+              selectedTimeRangeDisplay.startTime,
+              selectedTimeRangeDisplay.endTime,
+            ).start
+          }}</span>
+          <span class="opacity-70 text-[0.65rem]">→</span>
+          <span class="whitespace-nowrap text-[0.7rem]">{{
+            formatSmartTimestamp(
+              selectedTimeRangeDisplay.startTime,
+              selectedTimeRangeDisplay.endTime,
+            ).end
+          }}</span>
+        </div>
+
+        <!-- Additional filter info -->
+        <span
+          v-if="filterMetadata"
+          class="opacity-60 text-[0.65rem] ml-1"
+        >
+          {{ filterMetadata }}
+        </span>
+
+        <!-- Refresh button (shown when percentile changes on duration tab) -->
+        <OButton
+          v-if="showRefreshButton"
+          variant="primary"
+          size="icon-xs-sq"
+          @click="refreshAfterPercentileChange"
+          data-test="percentile-refresh-button"
+          icon-left="refresh"
+        >
+          <OTooltip :content="t('latencyInsights.refreshTooltip')" />
+        </OButton>
+      </div>
+    </template>
+
+      <!-- Tabs (only shown if multiple analysis types available) -->
+      <OTabs
+        v-if="showTabs"
+        v-model="activeAnalysisType"
+        dense
+        class="border-b border-solid border-[var(--o2-border-color)] text-[var(--o2-text-1)]! insights-dashboard-tabs"
+        align="left"
+      >
+        <OTab
+          v-for="tab in availableTabs"
+          :key="tab.name"
+          :name="tab.name"
+          :label="tab.label"
+          :icon="tab.icon"
+          :data-test="`traces-analysis-dashboard-${tab.name}-tab`"
+          class="min-h-[3rem]"
+        />
+      </OTabs>
+
+      <!-- Dashboard Content with Sidebar -->
+      <div class="analysis-content flex-1 pt-2 overflow-hidden flex min-h-0 bg-[#f5f5f5]">
+        <!-- Collapsed dimension sidebar bar (shown when hidden) -->
+        <div
+          v-if="!showDimensionSelector"
+          class="field-list-sidebar-header-collapsed card-container bg-surface-panel! shrink-0 cursor-pointer flex flex-col items-center justify-start pt-2 gap-1.5"
+          style="width: 50px; height: 100%"
+          data-test="dimension-selector-collapsed-bar"
+          @click="toggleDimensionSelector"
+        >
+          <OIcon name="expand-all" size="sm" class="field-list-collapsed-icon rotate-90 mt-2.5 text-[20px]" />
+          <div class="field-list-collapsed-title [writing-mode:vertical-rl] [text-orientation:mixed] font-bold text-xs">{{ t('traces.tracesAnalysisDashboard.dimensions') }}</div>
+        </div>
+
+        <OSplitter
+          v-model="splitterModel"
+          :limits="splitterLimits"
+          :style="{ width: showDimensionSelector ? '100%' : 'calc(100% - 50px)', height: '100%' }"
+          class="analysis-splitter-smooth [transition:all_0.3s_ease]"
+          @update:model-value="onSplitterUpdate"
+        >
+          <!-- LEFT: Dimension Selector Sidebar -->
+          <template #before>
+            <div class="relative-position h-full">
+              <div
+                v-if="showDimensionSelector"
+                class="dimension-sidebar card-container h-full flex flex-col bg-white"
+                data-test="dimension-selector-sidebar"
+              >
+                <!-- Sidebar Header with collapse button -->
+                <div
+                  class="px-3 py-2 flex items-center justify-between shrink-0 border-b border-solid border-[var(--o2-border-color)]"
+                >
+                  <span class="font-semibold text-sm">{{ t('traces.tracesAnalysisDashboard.dimensions') }}</span>
+                  <OButton
+                    variant="outline"
+                    size="icon-xs-sq"
+                    class="rotate-90"
+                    icon-left="unfold-less"
+                    :title="t('traces.tracesAnalysisDashboard.collapseDimensions')"
+                    data-test="dimension-selector-collapse-btn"
+                    @click="toggleDimensionSelector"
+                  />
+                </div>
+                <!-- Search Input -->
+                <div
+                  class="p-[0.625rem] border-solid border-[var(--o2-border-color)]"
+                >
+                  <OSearchInput
+                    v-model="dimensionSearchText"
+                    :placeholder="t('search.searchDimension')"
+                    clearable
+                    class="w-full"
+                    data-test="dimension-search-input"
+                  />
+                </div>
+
+                <!-- Dimension List -->
+                <div
+                  class="dimension-list-container flex-1 overflow-y-auto px-[0.325rem]"
+                >
+                  <ul v-if="filteredDimensions.length > 0" class="flex flex-col">
+                    <li
+                      v-for="dimension in filteredDimensions"
+                      :key="dimension.value"
+                      class="dimension-list-item flex items-center gap-2 px-3 py-1 border-none!"
+                    >
+                      <div class="flex items-center shrink-0">
+                        <OCheckbox
+                          :model-value="
+                            selectedDimensions.includes(dimension.value)
+                          "
+                          @update:model-value="toggleDimension(dimension.value)"
+                          size="xs"
+                          :data-test="`dimension-checkbox-${dimension.value}`"
+                        />
+                      </div>
+                      <div class="flex flex-col flex-1 min-w-0">
+                        <span
+                          class="dimension-label truncate cursor-pointer text-[var(--o2-text-2)]! text-sm [line-height:1.25rem]"
+                        >
+                          {{ dimension.label }}
+                          <OTooltip
+                            side="top"
+                            align="center"
+                            :side-offset="8"
+                            :delay="500"
+                            max-width="300px"
+                            :content="dimension.label"
+                          />
+                        </span>
+                      </div>
+                    </li>
+                  </ul>
+
+                  <!-- No results message -->
+                  <div v-else class="p-4 text-center text-gray-500">
+                    {{ t("search.noResult") }}
+                  </div>
+                </div>
+
+                <!-- Selected Count Footer -->
+                <div
+                  class="p-3 border-t border-solid border-[var(--o2-border-color)] o2-table-footer-title"
+                >
+                  {{ selectedDimensions.length }}
+                  {{ t("latencyInsights.dimensionsSelected") }}
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <template #separator>
+            <div class="splitter-vertical splitter-enabled"></div>
+          </template>
+
+          <!-- RIGHT: Dashboard Charts -->
+          <template #after>
+            <div class="h-full">
+              <div
+                class="h-full w-full relative-position overflow-auto"
+              >
+                <!-- Loading State -->
+                <div
+                  v-if="loading"
+                  class="flex flex-col items-center justify-center h-full py-20"
+                >
+                  <OSpinner
+                    size="xl"
+                    class="mb-4"
+                    data-test="traces-analysis-dashboard-loading-indicator"
+                  />
+                  <div class="text-base">
+                    {{ t("latencyInsights.analyzingDimensions") }}
+                  </div>
+                  <div class="text-xs text-gray-500 mt-2">
+                    {{
+                      t("latencyInsights.computingDistributions", {
+                        count: selectedDimensions.length,
+                      })
+                    }}
+                  </div>
+                </div>
+
+                <!-- Error State -->
+                <div
+                  v-else-if="error"
+                  data-test="traces-analysis-dashboard-error"
+                  class="flex flex-col items-center justify-center h-full py-20"
+                >
+                  <OIcon
+                    name="error-outline"
+                    class="mb-4" style="width: 3.75rem; height: 3.75rem;" />
+                  <div class="text-base mb-2">
+                    {{ t("latencyInsights.failedToLoad") }}
+                  </div>
+                  <div class="text-sm text-gray-500">{{ error }}</div>
+                  <OButton
+                    variant="outline"
+                    size="sm-action"
+                    class="mt-4"
+                    data-test="traces-analysis-dashboard-retry-btn"
+                    @click="loadAnalysis"
+                  >
+                    {{ t('latencyInsights.retryButton') }}
+                  </OButton>
+                </div>
+
+                <!-- Dashboard -->
+                <RenderDashboardCharts
+                  v-else-if="dashboardData"
+                  :key="`${activeAnalysisType}-${dashboardRenderKey}`"
+                  ref="dashboardChartsRef"
+                  :dashboardData="dashboardData"
+                  :currentTimeObj="currentTimeObj"
+                  :viewOnly="false"
+                  :allowAlertCreation="false"
+                  :simplifiedPanelView="true"
+                  :searchType="props.streamType === 'logs' ? 'insights' : 'dashboards'"
+                  @variablesManagerReady="onVariablesManagerReady"
+                  @onDeletePanel="handlePanelDelete"
+                  class="p-[0.4rem] trace-analysis-dashboards"
+                />
+              </div>
+            </div>
+          </template>
+        </OSplitter>
+      </div>
+  </ODrawer>
+</template>
+
+<script lang="ts" setup>
+import OTabs from '@/lib/navigation/Tabs/OTabs.vue'
+import OTab from '@/lib/navigation/Tabs/OTab.vue'
+import OButton from "@/lib/core/Button/OButton.vue";
+import OIcon from "@/lib/core/Icon/OIcon.vue";
+import ODrawer from "@/lib/overlay/Drawer/ODrawer.vue";
+import { ref, computed, watch, defineAsyncComponent, nextTick } from "vue";
+import { useStore } from "vuex";
+import { useI18n } from "vue-i18n";
+import useNotifications from "@/composables/useNotifications";
+import { formatTimeWithSuffix } from "@/utils/zincutils";
+import {
+  useLatencyInsightsAnalysis,
+  type LatencyInsightsConfig,
+} from "@/composables/useLatencyInsightsAnalysis";
+import {
+  useLatencyInsightsDashboard,
+  COMPARISON_COLORS,
+} from "@/composables/useLatencyInsightsDashboard";
+import {
+  selectDimensionsFromData,
+  selectTraceDimensions,
+} from "@/composables/useDimensionSelector";
+import OSpinner from "@/lib/feedback/Spinner/OSpinner.vue";
+import OTooltip from "@/lib/overlay/Tooltip/OTooltip.vue";
+import OCheckbox from "@/lib/forms/Checkbox/OCheckbox.vue";
+import OSearchInput from "@/lib/forms/SearchInput/OSearchInput.vue";
+import OSplitter from "@/lib/core/Splitter/OSplitter.vue";
+
+const RenderDashboardCharts = defineAsyncComponent(
+  () => import("@/views/Dashboards/RenderDashboardCharts.vue"),
+);
+
+interface DurationFilter {
+  start: number;
+  end: number;
+}
+
+interface RateFilter {
+  start: number;
+  end: number;
+  timeStart?: number;
+  timeEnd?: number;
+}
+
+interface ErrorFilter {
+  start: number;
+  end: number;
+  timeStart?: number;
+  timeEnd?: number;
+}
+
+interface TimeRange {
+  startTime: number;
+  endTime: number;
+}
+
+interface Props {
+  durationFilter?: DurationFilter;
+  rateFilter?: RateFilter;
+  errorFilter?: ErrorFilter;
+  timeRange: TimeRange;
+  streamName: string;
+  streamType?: string; // logs or traces
+  baseFilter?: string;
+  analysisType?: "duration" | "volume" | "error"; // Initial/default analysis type
+  availableAnalysisTypes?: Array<"duration" | "volume" | "error">; // Which tabs to show
+  streamFields?: any[]; // Stream schema fields for smart dimension selection
+  logSamples?: any[]; // Actual log data for sample-based analysis (logs only)
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  analysisType: "duration",
+  availableAnalysisTypes: () => ["volume"], // Default to just volume
+});
+
+const emit = defineEmits<{
+  (e: "close"): void;
+}>();
+
+const { showErrorNotification } = useNotifications();
+const store = useStore();
+const { t } = useI18n();
+const chipColors = computed(() =>
+  store.state.theme === "dark"
+    ? COMPARISON_COLORS.dark
+    : COMPARISON_COLORS.light,
+);
+const { loading, error, analyzeAllDimensions } = useLatencyInsightsAnalysis();
+const { generateDashboard } = useLatencyInsightsDashboard();
+
+// Variables manager will be initialized by RenderDashboardCharts
+// and we'll receive a reference to it via the @variablesManagerReady event
+const variablesManager = ref(null);
+
+const isOpen = ref(true);
+
+// Computed title for the drawer header based on analysis type
+const drawerTitle = computed(() => {
+  if (props.analysisType === 'duration') return t('latencyInsights.title');
+  if (props.analysisType === 'volume') return t('volumeInsights.title');
+  if (props.analysisType === 'error') return t('errorInsights.title');
+  return '';
+});
+const dashboardData = ref<any>(null);
+const dashboardChartsRef = ref<any>(null);
+const showDimensionSelector = ref(true); // Changed to true - now controls sidebar visibility
+const dashboardRenderKey = ref(0); // Only increment on full reload to avoid re-rendering on panel append
+const dimensionSearchText = ref("");
+
+// Splitter configuration for dimension selector sidebar (using percentage)
+const splitterModel = ref(25); // 25% width for dimension selector (default)
+const splitterLimits = [0, 30]; // Min 0% (allow full collapse), Max 30%
+const lastSplitterPosition = ref(25); // Remember last position before collapse
+
+// Percentile change tracking - use variables manager's hasUncommittedChanges
+// This matches the pattern used in ViewDashboard
+const showRefreshButton = computed(() => {
+  if (activeAnalysisType.value !== "duration") {
+    return false;
+  }
+
+  // Use variables manager to check for uncommitted changes (same as ViewDashboard)
+  const manager = variablesManager.value;
+  // Use optional chaining for safer property access
+  if (manager?.hasUncommittedChanges !== undefined) {
+    // Access the value if it's a ref, otherwise use directly
+    const hasChanges =
+      typeof manager.hasUncommittedChanges === "object" &&
+      "value" in manager.hasUncommittedChanges
+        ? manager.hasUncommittedChanges.value
+        : manager.hasUncommittedChanges;
+    return hasChanges;
+  }
+
+  return false;
+});
+
+// Detect custom SQL mode
+const isCustomSQLMode = computed(() => {
+  return props.baseFilter?.trim().toUpperCase().startsWith("SELECT") || false;
+});
+
+// Active tab management
+const activeAnalysisType = ref<"duration" | "volume" | "error">(
+  props.analysisType,
+);
+
+// Tab configuration
+const availableTabs = computed(() => {
+  return props.availableAnalysisTypes.map((type) => {
+    switch (type) {
+      case "volume":
+        return {
+          name: "volume",
+          label: t("volumeInsights.tabLabel"),
+          icon: "trending-up",
+        };
+      case "duration":
+        return {
+          name: "duration",
+          label: t("latencyInsights.tabLabel"),
+          icon: "schedule",
+        };
+      case "error":
+        return {
+          name: "error",
+          label: t("errorInsights.tabLabel"),
+          icon: "error-outline",
+        };
+    }
+  });
+});
+
+// Show tabs only if multiple analysis types available
+const showTabs = computed(() => props.availableAnalysisTypes.length > 1);
+
+/**
+ * Smart dimension selection
+ * - For logs: Uses sample-based analysis with schema metadata
+ * - For traces: Uses OpenTelemetry semantic conventions
+ */
+const getInitialDimensions = () => {
+  const streamType = props.streamType || "traces";
+  const schemaFields = (props.streamFields || []).map((f: any) => ({
+    name: f.name || f,
+    type: f.type,
+    isIndexed: f.isIndexed || false,
+    isFTS: f.ftsKey || false,
+    isInteresting: f.isInterestingField || false,
+  }));
+
+  // For LOGS: Use sample-based analysis if we have log data
+  if (
+    streamType === "logs" &&
+    props.logSamples &&
+    props.logSamples.length >= 10
+  ) {
+    return selectDimensionsFromData(props.logSamples, schemaFields, 6);
+  }
+
+  // For TRACES: Use OTel conventions
+  if (streamType === "traces") {
+    return selectTraceDimensions(schemaFields, 6);
+  }
+
+  // Fallback for logs without samples
+  return selectDimensionsFromData([], schemaFields, 6);
+};
+
+// Selected dimensions (user can modify)
+const selectedDimensions = ref<string[]>(getInitialDimensions());
+
+// Available dimensions for dropdown (all stream fields)
+const availableDimensions = computed(() => {
+  return (props.streamFields || [])
+    .map((f: any) => ({
+      label: f.name || f,
+      value: f.name || f,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+});
+
+// Filter dimensions based on search text and sort (selected items first)
+const filteredDimensions = computed(() => {
+  let dimensions = availableDimensions.value;
+
+  // Filter by search text if provided
+  if (dimensionSearchText.value?.trim()) {
+    const searchLower = dimensionSearchText.value.toLowerCase();
+    dimensions = dimensions.filter((dim) =>
+      dim.label.toLowerCase().includes(searchLower),
+    );
+  }
+
+  // Sort: selected dimensions first, then unselected
+  return dimensions.sort((a, b) => {
+    const aSelected = selectedDimensions.value.includes(a.value);
+    const bSelected = selectedDimensions.value.includes(b.value);
+
+    // If one is selected and other is not, selected comes first
+    if (aSelected && !bSelected) return -1;
+    if (!aSelected && bSelected) return 1;
+
+    // If both selected or both unselected, maintain original order (alphabetical)
+    return a.label.localeCompare(b.label);
+  });
+});
+
+const currentOrgIdentifier = computed(() => {
+  return store.state.selectedOrganization.identifier;
+});
+
+const currentTimeObj = computed(() => {
+  return {
+    __global: {
+      start_time: new Date(baselineTimeRange.value.startTime),
+      end_time: new Date(baselineTimeRange.value.endTime),
+    },
+  };
+});
+
+// Toggle dimension selection
+const toggleDimension = (dimensionValue: string) => {
+  const index = selectedDimensions.value.indexOf(dimensionValue);
+  if (index > -1) {
+    // Prevent removing the last dimension - at least one must remain
+    if (selectedDimensions.value.length <= 1) {
+      return;
+    }
+    // Remove dimension - create new array to trigger reactivity
+    selectedDimensions.value = selectedDimensions.value.filter(
+      (d) => d !== dimensionValue,
+    );
+  } else {
+    // Add dimension - create new array to trigger reactivity
+    selectedDimensions.value = [...selectedDimensions.value, dimensionValue];
+  }
+};
+
+// Get dimension label from value
+const getDimensionLabel = (dimensionValue: string): string => {
+  const dimension = availableDimensions.value.find(
+    (d) => d.value === dimensionValue,
+  );
+  return dimension?.label || dimensionValue;
+};
+
+// Handle panel deletion - extract dimension name from panel and remove from selection
+const handlePanelDelete = (panelId: string) => {
+  if (!dashboardData.value?.tabs?.[0]?.panels) return;
+
+  // Find the panel by ID
+  const panel = dashboardData.value.tabs[0].panels.find(
+    (p: any) => p.id === panelId,
+  );
+
+  if (panel?.title) {
+    // Panel title is the dimension name - remove it from selectedDimensions
+    const dimensionName = panel.title;
+    toggleDimension(dimensionName);
+  }
+};
+
+// Toggle dimension selector sidebar visibility (same pattern as settings page controlManagementTabs)
+const toggleDimensionSelector = () => {
+  if (showDimensionSelector.value) {
+    // Collapsing: save current position and set to 0
+    const prevVal = splitterModel.value;
+    lastSplitterPosition.value = prevVal;
+    splitterModel.value = 0;
+    showDimensionSelector.value = false;
+  } else {
+    // Expanding: restore previous position, but use 25% if it was too small (< 10) or not set
+    const savedPosition = lastSplitterPosition.value;
+    splitterModel.value =
+      savedPosition && savedPosition >= 10 ? savedPosition : 25;
+    showDimensionSelector.value = true;
+  }
+
+  // Redraw charts after sidebar collapse/expand
+  nextTick(() => {
+    window.dispatchEvent(new Event("resize"));
+  });
+};
+
+// Handle splitter resize to redraw charts
+const onSplitterUpdate = () => {
+  // Save position when user manually drags (but only if > 0)
+  if (splitterModel.value > 0) {
+    lastSplitterPosition.value = splitterModel.value;
+  }
+
+  window.dispatchEvent(new Event("resize"));
+};
+
+const baselineTimeRange = computed(() => {
+  // Baseline is always the original/global time range (before brush selection)
+  return props.timeRange;
+});
+
+// Compute selected time range from filters
+const selectedTimeRangeDisplay = computed(() => {
+  // Check for time-based filter from any RED metrics panel
+  if (props.rateFilter?.timeStart && props.rateFilter?.timeEnd) {
+    return {
+      startTime: props.rateFilter.timeStart,
+      endTime: props.rateFilter.timeEnd,
+    };
+  } else if (props.durationFilter?.timeStart && props.durationFilter?.timeEnd) {
+    return {
+      startTime: props.durationFilter.timeStart,
+      endTime: props.durationFilter.timeEnd,
+    };
+  } else if (props.errorFilter?.timeStart && props.errorFilter?.timeEnd) {
+    return {
+      startTime: props.errorFilter.timeStart,
+      endTime: props.errorFilter.timeEnd,
+    };
+  }
+  return null;
+});
+
+// Check if a selected time range exists (brush selection)
+const hasSelectedTimeRange = computed(() => {
+  return selectedTimeRangeDisplay.value !== null;
+});
+
+// Additional filter metadata (duration, rate, or error count)
+const filterMetadata = computed(() => {
+  if (
+    props.analysisType === "duration" &&
+    props.durationFilter &&
+    !props.durationFilter.timeStart
+  ) {
+    return `${t("latencyInsights.durationLabel")} ${formatTimeWithSuffix(props.durationFilter.start)} - ${formatTimeWithSuffix(props.durationFilter.end)}`;
+  } else if (
+    props.analysisType === "volume" &&
+    props.rateFilter &&
+    !props.rateFilter.timeStart
+  ) {
+    return `${t("volumeInsights.rateLabel")} ${props.rateFilter.start} - ${props.rateFilter.end} ${t('traces.tracesAnalysisDashboard.tracesPerInterval')}`;
+  } else if (
+    props.analysisType === "error" &&
+    props.errorFilter &&
+    !props.errorFilter.timeStart
+  ) {
+    return `${t("errorInsights.errorsGreaterThan")} ${props.errorFilter.start}`;
+  }
+  return null;
+});
+
+const loadAnalysis = async () => {
+  try {
+    // Determine which filter to use based on active analysis type
+    let filterConfig;
+    if (activeAnalysisType.value === "duration") {
+      filterConfig = {
+        durationFilter: props.durationFilter,
+        rateFilter: undefined,
+        errorFilter: undefined,
+      };
+    } else if (activeAnalysisType.value === "volume") {
+      filterConfig = {
+        durationFilter: undefined,
+        rateFilter: props.rateFilter,
+        errorFilter: undefined,
+      };
+    } else if (activeAnalysisType.value === "error") {
+      filterConfig = {
+        durationFilter: undefined,
+        rateFilter: undefined,
+        errorFilter: props.errorFilter,
+      };
+    }
+
+    // For volume/error analysis with filter, use the actual selected time range from the brush
+    // Otherwise, use the global time range
+    let selectedTimeRange = props.timeRange;
+
+    // Check for ANY time-based filter (from any RED metrics panel)
+    // Use whichever filter has a time range selection - applies to ALL tabs
+    if (props.rateFilter?.timeStart && props.rateFilter?.timeEnd) {
+      selectedTimeRange = {
+        startTime: props.rateFilter.timeStart,
+        endTime: props.rateFilter.timeEnd,
+      };
+    } else if (
+      props.durationFilter?.timeStart &&
+      props.durationFilter?.timeEnd
+    ) {
+      selectedTimeRange = {
+        startTime: props.durationFilter.timeStart,
+        endTime: props.durationFilter.timeEnd,
+      };
+    } else if (props.errorFilter?.timeStart && props.errorFilter?.timeEnd) {
+      selectedTimeRange = {
+        startTime: props.errorFilter.timeStart,
+        endTime: props.errorFilter.timeEnd,
+      };
+    }
+
+    const config: LatencyInsightsConfig = {
+      streamName: props.streamName,
+      streamType: props.streamType || "traces",
+      orgIdentifier: currentOrgIdentifier.value,
+      selectedTimeRange,
+      baselineTimeRange: baselineTimeRange.value,
+      ...filterConfig,
+      baseFilter: props.baseFilter,
+      dimensions: selectedDimensions.value,
+      analysisType: activeAnalysisType.value,
+      percentile: getCurrentPercentile() || undefined,
+    };
+
+    // OPTIMIZATION: Skip analyzeAllDimensions() to avoid 20 extra queries
+    // Instead, create mock analyses with dimension names only
+    // The dashboard UNION queries will fetch the actual data
+    const mockAnalyses = selectedDimensions.value.map((dimensionName) => ({
+      dimensionName,
+      data: [], // Empty - dashboard will fetch via UNION query
+      baselinePopulation: 0, // Will be calculated from query results
+      selectedPopulation: 0, // Will be calculated from query results
+      differenceScore: 0, // Will be calculated from query results
+    }));
+
+    // Generate dashboard JSON with UNION queries
+    const dashboard = generateDashboard(
+      mockAnalyses,
+      config,
+      store.state.theme,
+    );
+
+    dashboardData.value = dashboard;
+    dashboardRenderKey.value++; // Increment to force re-render on full reload
+
+    // Don't reset percentile values - keep them synchronized with the dashboard
+    // The handleVariablesDataChange event will update them if needed
+  } catch (err: any) {
+    console.error("Error loading analysis:", err);
+    showErrorNotification(err.message || t("latencyInsights.failedToLoad"));
+  }
+};
+
+// Handler for when variables manager is ready from RenderDashboardCharts
+const onVariablesManagerReady = (manager: any) => {
+  variablesManager.value = manager;
+
+  // Load analysis immediately when manager is ready to populate dashboard
+  // This ensures the dashboard shows data on initial load instead of remaining blank
+  if (activeAnalysisType.value === "duration" && !dashboardData.value) {
+    loadAnalysis();
+  }
+};
+
+// Helper to get current percentile from variables manager
+const getCurrentPercentile = (): string => {
+  const manager = variablesManager.value;
+  if (manager && manager.committedVariablesData) {
+    // committedVariablesData has structure: { global: [], tabs: {}, panels: {} }
+    // Percentile is likely a global variable
+    const percentileVar = manager.committedVariablesData.global?.find(
+      (v: any) => v.name === "percentile",
+    );
+    if (percentileVar && percentileVar.value !== undefined) {
+      return percentileVar.value;
+    }
+  }
+  return "0.95"; // Default to P95
+};
+
+const refreshAfterPercentileChange = () => {
+  // Commit all variable changes before reloading (same as ViewDashboard's refreshData)
+  if (dashboardChartsRef.value?.commitAllVariables) {
+    dashboardChartsRef.value.commitAllVariables();
+  }
+
+  // Reload the analysis with new percentile
+  loadAnalysis();
+};
+
+const onClose = () => {
+  emit("close");
+};
+
+// Helper functions for formatting
+const formatTimestamp = (microseconds: number) => {
+  const date = new Date(microseconds / 1000);
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+  return `${hours}:${minutes}:${seconds}`;
+};
+
+const formatFullTimestamp = (microseconds: number) => {
+  const date = new Date(microseconds / 1000);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+};
+
+const formatCompactTimestamp = (microseconds: number) => {
+  const date = new Date(microseconds / 1000);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+  // Format as MM/DD HH:MM:SS (more compact)
+  return `${month}/${day} ${hours}:${minutes}:${seconds}`;
+};
+
+// Smart timestamp formatter - shows date only once if same day
+const formatSmartTimestamp = (
+  startMicroseconds: number,
+  endMicroseconds: number,
+) => {
+  const startDate = new Date(startMicroseconds / 1000);
+  const endDate = new Date(endMicroseconds / 1000);
+
+  const formatTime = (date: Date) => {
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    const seconds = String(date.getSeconds()).padStart(2, "0");
+    return `${hours}:${minutes}:${seconds}`;
+  };
+
+  const formatDate = (date: Date) => {
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${month}/${day}`;
+  };
+
+  const isSameDay = startDate.toDateString() === endDate.toDateString();
+
+  if (isSameDay) {
+    // Same day: show "MM/DD HH:MM:SS" for start, only "HH:MM:SS" for end
+    return {
+      start: `${formatDate(startDate)} ${formatTime(startDate)}`,
+      end: formatTime(endDate),
+    };
+  } else {
+    // Different days: show both full timestamps
+    return {
+      start: `${formatDate(startDate)} ${formatTime(startDate)}`,
+      end: `${formatDate(endDate)} ${formatTime(endDate)}`,
+    };
+  }
+};
+
+const formatTimeWithSuffix = (milliseconds: number) => {
+  if (milliseconds >= 1000) {
+    return `${(milliseconds / 1000).toFixed(2)}s`;
+  }
+  return `${milliseconds.toFixed(2)}ms`;
+};
+
+// Load analysis when modal opens
+watch(
+  () => isOpen.value,
+  (newVal) => {
+    if (newVal) {
+      loadAnalysis();
+    }
+  },
+  { immediate: true },
+);
+
+// Add new dimension panels without re-rendering existing ones
+const addDimensionPanels = async (addedDimensions: string[]) => {
+  if (!dashboardData.value || !dashboardData.value.tabs?.[0]?.panels) {
+    loadAnalysis();
+    return;
+  }
+
+  try {
+    // Get current config from existing dashboard setup
+    const currentPanels = dashboardData.value.tabs[0].panels;
+    const existingCount = currentPanels.length;
+
+    // Build config (reuse logic from loadAnalysis)
+    let filterConfig: any = {};
+    if (activeAnalysisType.value === "duration") {
+      filterConfig = {
+        durationFilter: props.durationFilter,
+        rateFilter: undefined,
+        errorFilter: undefined,
+      };
+    } else if (activeAnalysisType.value === "volume") {
+      filterConfig = {
+        durationFilter: undefined,
+        rateFilter: props.rateFilter,
+        errorFilter: undefined,
+      };
+    } else if (activeAnalysisType.value === "error") {
+      filterConfig = {
+        durationFilter: undefined,
+        rateFilter: undefined,
+        errorFilter: props.errorFilter,
+      };
+    }
+
+    let selectedTimeRange = props.timeRange;
+    if (props.rateFilter?.timeStart && props.rateFilter?.timeEnd) {
+      selectedTimeRange = {
+        startTime: props.rateFilter.timeStart,
+        endTime: props.rateFilter.timeEnd,
+      };
+    } else if (
+      props.durationFilter?.timeStart &&
+      props.durationFilter?.timeEnd
+    ) {
+      selectedTimeRange = {
+        startTime: props.durationFilter.timeStart,
+        endTime: props.durationFilter.timeEnd,
+      };
+    } else if (props.errorFilter?.timeStart && props.errorFilter?.timeEnd) {
+      selectedTimeRange = {
+        startTime: props.errorFilter.timeStart,
+        endTime: props.errorFilter.timeEnd,
+      };
+    }
+
+    const config: LatencyInsightsConfig = {
+      streamName: props.streamName,
+      streamType: props.streamType || "traces",
+      orgIdentifier: currentOrgIdentifier.value,
+      selectedTimeRange,
+      baselineTimeRange: baselineTimeRange.value,
+      ...filterConfig,
+      baseFilter: props.baseFilter,
+      dimensions: addedDimensions,
+      analysisType: activeAnalysisType.value,
+    };
+
+    // Generate mock analyses for new dimensions only
+    const mockAnalyses = addedDimensions.map((dimensionName) => ({
+      dimensionName,
+      data: [],
+      baselinePopulation: 0,
+      selectedPopulation: 0,
+      differenceScore: 0,
+    }));
+
+    // Generate new panels using the same logic as generateDashboard
+    const newPanels = generateDashboard(mockAnalyses, config, store.state.theme)
+      .tabs[0].panels;
+
+    // Update layout positions for new panels to appear after existing ones
+    const timestamp = Date.now();
+    newPanels.forEach((panel, index) => {
+      const absoluteIndex = existingCount + index;
+      // Use a completely unique ID that includes timestamp to avoid any collision
+      const uniqueId = `${panel.layout.i}_${timestamp}_${absoluteIndex}`;
+      panel.layout = {
+        x: (absoluteIndex % 3) * 64,
+        y: Math.floor(absoluteIndex / 3) * 16,
+        w: 64,
+        h: 16,
+        i: uniqueId,
+      };
+      // Also update the panel ID to match
+      panel.id = `${panel.id}_${timestamp}`;
+    });
+
+    // Create a new dashboard object to ensure Vue detects the change
+    // We need to increment the render key to force grid re-layout, but this will cause re-queries
+    // Unfortunately, without modifying RenderDashboardCharts to cache panel data, we can't avoid this
+    const updatedDashboard = {
+      ...dashboardData.value,
+      tabs: [
+        {
+          ...dashboardData.value.tabs[0],
+          panels: [...currentPanels, ...newPanels],
+        },
+        ...dashboardData.value.tabs.slice(1),
+      ],
+    };
+
+    dashboardData.value = updatedDashboard;
+
+    // DON'T increment dashboardRenderKey - let Vue's reactivity handle it
+    // Since each panel has a unique ID (item.id + timestamp), Vue will only render the new panel
+
+    // Wait for DOM to update, then refresh GridStack to position new panels
+    await nextTick();
+    if (dashboardChartsRef.value?.refreshGridStack) {
+      await dashboardChartsRef.value.refreshGridStack();
+    }
+  } catch (err: any) {
+    console.error("Error adding dimension panels:", err);
+    loadAnalysis();
+  }
+};
+
+// Reload when selected dimensions change
+watch(
+  selectedDimensions,
+  (newDimensions, oldDimensions) => {
+    // Skip if this is the initial load (already handled by isOpen watcher)
+    if (!oldDimensions || oldDimensions.length === 0) {
+      return;
+    }
+
+    // Check if dimensions actually changed
+    const changed =
+      newDimensions.length !== oldDimensions.length ||
+      newDimensions.some((d, i) => d !== oldDimensions[i]);
+
+    if (!changed) {
+      return;
+    }
+
+    const addedDimensions = newDimensions.filter(
+      (d) => !oldDimensions.includes(d),
+    );
+    const removedDimensions = oldDimensions.filter(
+      (d) => !newDimensions.includes(d),
+    );
+
+    if (isOpen.value && newDimensions.length > 0) {
+      if (removedDimensions.length > 0) {
+        // If dimensions were removed, we need to regenerate to remove panels
+        dashboardData.value = null;
+        nextTick(() => {
+          loadAnalysis();
+        });
+      } else if (addedDimensions.length > 0) {
+        // If only added, append new panels without regenerating existing ones
+        addDimensionPanels(addedDimensions);
+      }
+    }
+  },
+  { deep: true },
+);
+
+// Reload when active analysis type (tab) changes
+watch(
+  () => activeAnalysisType.value,
+  (newTab, oldTab) => {
+    if (isOpen.value && !loading.value) {
+      loadAnalysis();
+    }
+  },
+);
+
+// Watch for changes in props
+watch(
+  () => [
+    props.durationFilter,
+    props.rateFilter,
+    props.timeRange,
+    props.streamName,
+    props.analysisType,
+  ],
+  () => {
+    if (isOpen.value) {
+      loadAnalysis();
+    }
+  },
+  { deep: true },
+);
+</script>
+
+<style>
+/* Non-scoped: ODrawer body for this drawer does not have flex:1 by default
+ * (intentional for form drawers, but the Insights drawer needs a full-height
+ * splitter layout). Override the body div — 4th child of the drawer panel after
+ * the two sr-only elements (h2, p) and the header div.
+ * Also adds the top gap (matching --spacing-dialog-content-py = 0.75rem)
+ * that ODialog provides by default but ODrawer omits.
+ */
+[data-test="traces-analysis-dashboard-drawer"] > div:nth-child(4) {
+  flex: 1 1 0 !important;
+  overflow: hidden !important;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Time range chips styling - matching chart colors */
+.time-range-chip {
+  font-size: 0.7rem;
+  line-height: 1.2;
+  transition: all 0.2s ease;
+}
+
+.time-range-chip.baseline-chip,
+.time-range-chip.selected-chip {
+  background: color-mix(in srgb, var(--chip-color) 20%, transparent);
+  border: 1px solid color-mix(in srgb, var(--chip-color) 50%, transparent);
+  color: color-mix(in srgb, var(--chip-color) 80%, #000) !important;
+  font-weight: 500;
+}
+
+.dimension-list-item:hover {
+  background-color: var(--q-hover-color, rgba(0, 0, 0, 0.04));
+}
+
+/* Splitter separator bar — visible narrow divider */
+.analysis-splitter-smooth.q-splitter--vertical > .q-splitter__separator {
+  width: 10px !important;
+}
+
+/* Dark mode support */
+body.body--dark .analysis-content {
+  background: #2a2a2a !important;
+}
+
+body.body--dark .dimension-sidebar {
+  background: #202223 !important;
+}
+
+body.body--dark .dimension-list-item {
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+}
+
+body.body--dark .dimension-list-item:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* Time range chips: dark mode text adjustment */
+body.body--dark .time-range-chip.baseline-chip,
+body.body--dark .time-range-chip.selected-chip {
+  color: color-mix(in srgb, var(--chip-color) 80%, #fff) !important;
+}
+</style>

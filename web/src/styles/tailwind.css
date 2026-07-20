@@ -1,0 +1,132 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+/* Design tokens — all SCSS files removed; these 4 CSS files are the sole source. */
+@import "../lib/styles/tokens/base.css";
+@import "../lib/styles/tokens/semantic.css";
+@import "../lib/styles/tokens/component.css";
+@import "../lib/styles/tokens/dark.css";
+
+@plugin "@tailwindcss/typography";
+
+/* Bind `dark:` to the app's `.dark` class (set by utils/theme.ts), not the OS
+   `prefers-color-scheme` — Tailwind v4's default — so it follows the app theme. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@source "../**/*.{vue,js,ts}";
+
+/*
+ * Font-size parity with the pre-prefix-removal build.
+ *
+ * On main (`@import "tailwindcss" prefix(tw)`) Tailwind namespaced its theme
+ * variables, so the `tw:text-sm` / `tw:text-base` utilities read Tailwind's
+ * built-in scale (`--tw-text-sm` = 0.875rem/14px, `--tw-text-base` = 1rem/16px)
+ * — independent of the O2 design tokens `--text-sm` (0.8125rem/13px) and
+ * `--text-base` (0.875rem/14px), which drive element-level rules (body, p,
+ * headings, label).
+ *
+ * Dropping the prefix collapsed both into the single `--text-*` variable, so the
+ * ~780 `text-sm` / `text-base` utility usages inherited the smaller O2 tokens and
+ * every label/header/button shrank ~1px. Re-pin ONLY the two utilities to
+ * Tailwind's defaults so utility-driven text matches main pixel-for-pixel, while
+ * the semantic element rules keep the O2 token sizes (unchanged from main).
+ * `var(--tw-leading, …)` is preserved so `leading-*` overrides still win.
+ */
+@layer utilities {
+  .text-sm {
+    font-size: 0.875rem;
+    line-height: var(--tw-leading, calc(1.25 / 0.875));
+  }
+  .text-base {
+    font-size: 1rem;
+    line-height: var(--tw-leading, calc(1.5 / 1));
+  }
+  /* `!important` variants (`text-sm!` / `text-base!`) are separate classes and
+     must be re-pinned too, or they fall back to the smaller O2 token. */
+  .text-sm\! {
+    font-size: 0.875rem !important;
+    line-height: var(--tw-leading, calc(1.25 / 0.875)) !important;
+  }
+  .text-base\! {
+    font-size: 1rem !important;
+    line-height: var(--tw-leading, calc(1.5 / 1)) !important;
+  }
+}
+
+/*
+ * When reka-ui opens a modal dialog it sets `body { pointer-events: none }`
+ * and re-enables events only on the DialogContent DismissableLayer node.
+ * Any portaled floating element (dropdown, select, combobox, date-picker …)
+ * that is teleported to <body> as a sibling would inherit `pointer-events: none`,
+ * making items un-clickable and showing a disabled cursor.
+ * Force pointer-events back to auto for all known portal wrappers so they
+ * remain fully interactive while a modal is open.
+ */
+[data-reka-popper-content-wrapper] {
+  pointer-events: auto !important;
+}
+
+/*
+ * Query editor placeholder — the ONE definition for every page that overlays
+ * a placeholder on the Monaco query editor (logs, traces, RUM sessions,
+ * RUM error tracking, alerts). Mirrors Monaco's rendered text (monospace,
+ * same line height) so the placeholder reads as the future typed query.
+ * --o2-text-placeholder is theme-paired, so no dark override is needed.
+ */
+.query-editor-placeholder-overlay .query-editor-placeholder-typewriter {
+  font-family: monospace;
+  font-size: var(--text-base);
+  line-height: 1.3125rem;
+  color: var(--o2-text-placeholder);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@layer base {
+  *, :before, :after {
+    border-color: #e5e7eb;
+  }
+
+}
+
+/*
+ * Reduced-motion: users who ask for less motion get a plain, near-instant
+ * fade instead of the slide/zoom enter-exit animations (tw-animate-css
+ * `animate-in` / `animate-out`). Keeps overlays usable without the movement.
+ */
+@media (prefers-reduced-motion: reduce) {
+  [data-reka-popper-content-wrapper] *,
+  [data-o2-dialog],
+  [data-o2-drawer],
+  [data-test="o-dialog-overlay"],
+  [data-test="o-drawer-overlay"] {
+    animation-duration: 0.01ms !important;
+    animation-timing-function: linear !important;
+  }
+}
+
+/*
+ * Clip-path "reveal" for popups (dropdown / select / combobox).
+ * The menu renders at full size and is progressively unveiled with a
+ * `clip-path` wipe — content never scales or squishes, it just gets
+ * revealed from the trigger edge. `-down-*` wipes top→bottom (bottom-placed
+ * menus), `-up-*` wipes bottom→top (top-placed menus, via `data-[side=top]`).
+ * `round 0.5rem` keeps the corners rounded throughout the wipe.
+ */
+@keyframes o2-reveal-down-in {
+  from { opacity: 0; clip-path: inset(0 0 100% 0 round 0.5rem); }
+  to   { opacity: 1; clip-path: inset(0 0 0 0 round 0.5rem); }
+}
+@keyframes o2-reveal-down-out {
+  from { opacity: 1; clip-path: inset(0 0 0 0 round 0.5rem); }
+  to   { opacity: 0; clip-path: inset(0 0 100% 0 round 0.5rem); }
+}
+@keyframes o2-reveal-up-in {
+  from { opacity: 0; clip-path: inset(100% 0 0 0 round 0.5rem); }
+  to   { opacity: 1; clip-path: inset(0 0 0 0 round 0.5rem); }
+}
+@keyframes o2-reveal-up-out {
+  from { opacity: 1; clip-path: inset(0 0 0 0 round 0.5rem); }
+  to   { opacity: 0; clip-path: inset(100% 0 0 0 round 0.5rem); }
+}
+

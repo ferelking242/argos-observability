@@ -1,0 +1,742 @@
+﻿<!-- Copyright 2026 OpenObserve Inc.
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+-->
+
+<template>
+  <div class="w-full h-full flex flex-col min-h-0">
+    <AppPageHeader
+      :title="t('alerts.insights.title')"
+      :back="{ onClick: goBack, dataTest: 'alert-insights-back-btn' }"
+      tabs-below
+      class="shrink-0 px-4"
+    >
+      <template #actions>
+        <date-time
+          ref="dateTimeRef"
+          auto-apply
+          :default-type="dateTimeType"
+          :default-absolute-time="{
+            startTime: timeRange.__global.start_time.getTime(),
+            endTime: timeRange.__global.end_time.getTime(),
+          }"
+          :default-relative-time="relativeTime"
+          @on:date-change="updateDateTime"
+          @on:timezone-change="updateTimezone"
+          data-test="alert-insights-datetime"
+        />
+
+        <OButton
+          @click="refreshDashboard"
+          :loading="isLoading"
+          variant="ghost"
+          size="icon-sm"
+          data-test="alert-insights-refresh-btn"
+        >
+          <OIcon name="refresh" size="sm" />
+          <OTooltip :content="t('common.refresh')" />
+        </OButton>
+      </template>
+
+      <template #tabs>
+        <OTabs
+          v-model="currentTab"
+          dense
+          class="alert-insights-tabs"
+          align="left"
+          data-test="alert-insights-tabs"
+        >
+          <OTab name="overview" :label="t('alerts.insights.tabs.overview')" data-test="tab-overview" />
+          <OTab
+            v-if="isEnterprise"
+            name="frequency"
+            :label="t('alerts.insights.tabs.frequency')"
+            data-test="tab-frequency"
+          />
+          <OTab
+            v-if="isEnterprise"
+            name="correlation"
+            :label="t('alerts.insights.tabs.correlation')"
+            data-test="tab-correlation"
+          />
+          <OTab name="quality" :label="t('alerts.insights.tabs.quality')" data-test="tab-quality" />
+        </OTabs>
+      </template>
+    </AppPageHeader>
+
+    <!-- Filters Section -->
+    <div
+      v-if="show"
+      class="flex items-center gap-2 flex-wrap px-4 py-3 border-b border-(--q-border-color) shrink-0"
+    >
+          <span class="text-sm font-semibold relative top-1">{{ t("common.filters") }}:</span>
+
+          <!-- Failed Only Toggle -->
+          <OSwitch
+          v-model="showFailedOnly"
+          :label="t('alerts.insights.filters.failedOnly')"
+          class="o2-toggle-button-sm"
+          :class="store.state.theme === 'dark' ? 'o2-toggle-button-sm-dark' : 'o2-toggle-button-sm-light'"
+          @update:model-value="onFilterChange"
+          data-test="failed-only-toggle"
+          >
+          <OTooltip :content="t('alerts.insights.filters.failedOnlyTooltip')">
+          </OTooltip>
+        </OSwitch>
+
+          <!-- Silenced Only Toggle -->
+          <OSwitch
+          v-model="showSilencedOnly"
+          :label="t('alerts.insights.filters.silenced')"
+          class="o2-toggle-button-sm"
+          :class="store.state.theme === 'dark' ? 'o2-toggle-button-sm-dark' : 'o2-toggle-button-sm-light'"
+          @update:model-value="onFilterChange"
+          data-test="silenced-only-toggle"
+          >
+          <OTooltip :content="t('alerts.insights.filters.silencedTooltip')">
+          </OTooltip>
+            </OSwitch>
+
+          <!-- Range Filter Chips -->
+          <div
+            v-for="[panelId, filter] in rangeFilters"
+            :key="panelId"
+            class="inline-flex items-center rounded py-1 px-3 text-sm cursor-default"
+            :class="
+              store.state.theme === 'dark'
+                ? 'bg-indigo-900 text-indigo-100'
+                : 'bg-blue-100 text-blue-800'
+            "
+            data-test="range-filter-chip"
+          >
+            <span class="chip-label">
+              {{ filter.panelTitle }}
+              <span v-if="filter.start !== null && filter.end !== null">
+                {{ formatFilterValue(filter.start) }} -
+                {{ formatFilterValue(filter.end) }}
+              </span>
+              <span v-else-if="filter.start !== null">
+                >= {{ formatFilterValue(filter.start) }}
+              </span>
+              <span v-else-if="filter.end !== null">
+                <= {{ formatFilterValue(filter.end) }}
+              </span>
+            </span>
+            <OIcon
+              name="close" size="sm"
+              class="cursor-pointer text-sm ml-2 opacity-70 transition-opacity duration-200 hover:opacity-100"
+              @click="removeRangeFilter(panelId)"
+            />
+          </div>
+
+          <!-- Clear All Filters -->
+          <OButton
+            v-if="hasActiveFilters"
+            variant="ghost"
+            size="sm"
+            class="ml-2"
+            @click="clearAllFilters"
+            data-test="clear-all-filters-btn"
+            icon-left="close"
+          >
+            {{ t('alerts.insights.filters.clearAll') }}
+          </OButton>
+    </div>
+
+    <!-- Action Buttons Row -->
+    <div
+      v-if="selectedAlertForAction"
+      class="bg-primary bg-opacity-10 flex items-center px-4 py-3 gap-3 border-b border-(--q-border-color) shrink-0"
+      data-test="action-buttons-row"
+    >
+      <OIcon name="campaign" size="sm" />
+      <span class="text-sm font-medium"
+        >{{ t("alerts.insights.actions.actionsFor") }} <strong>{{ selectedAlertForAction }}</strong></span
+      >
+
+      <OButton
+        variant="ghost-primary"
+        size="sm"
+        @click="openDedupConfig"
+        data-test="configure-dedup-btn"
+        icon-left="settings"
+      >
+        {{ t("alerts.insights.actions.configureDedup") }}
+        <OTooltip :content="t('alerts.insights.actions.configureDedupTooltip')" />
+      </OButton>
+
+      <OButton
+        variant="ghost-primary"
+        size="sm"
+        @click="editAlert"
+        data-test="edit-alert-btn"
+        icon-left="edit"
+      >
+        {{ t("alerts.insights.actions.editAlert") }}
+        <OTooltip :content="t('alerts.insights.actions.editAlertTooltip')" />
+      </OButton>
+
+      <OButton
+        variant="ghost-primary"
+        size="sm"
+        @click="viewHistory"
+        data-test="view-history-btn"
+        icon-left="history"
+      >
+        {{ t("alerts.insights.actions.viewHistory") }}
+        <OTooltip :content="t('alerts.insights.actions.viewHistoryTooltip')" />
+      </OButton>
+
+      <div class="flex-1" />
+
+      <OButton
+        variant="ghost"
+        size="icon-circle-sm"
+        @click="selectedAlertForAction = null"
+        data-test="close-actions-btn"
+      >
+        <OIcon name="close" size="sm" />
+        <OTooltip content="Close actions" />
+      </OButton>
+    </div>
+
+    <!-- Dashboard Content -->
+    <div class="flex-1 min-h-0 px-2.5 pb-2.5">
+      <div class="card-container mb-2.5 h-[calc(100vh-13rem)]">
+        <div
+          @contextmenu="handleNativeContextMenu"
+        >
+          <div v-show="isLoading" class="flex items-center justify-center h-100">
+            <OSpinner size="md" />
+            <div class="ml-3">Loading insights...</div>
+          </div>
+
+          <div :style="{ visibility: isLoading ? 'hidden' : 'visible' }">
+            <div v-if="!dashboardData" class="p-5 text-center text-[#666]">
+              {{ t("alerts.insights.loading.dashboardConfig") }}
+            </div>
+            <div v-else-if="!show" class="p-5 text-center text-[#666]">
+              {{ t("alerts.insights.loading.refreshing") }}
+            </div>
+            <RenderDashboardCharts
+              v-else
+              :key="dashboardData.dashboardId + '-' + currentTab"
+              ref="dashboardRef"
+              :viewOnly="true"
+              :dashboardData="dashboardData"
+              :currentTimeObj="timeRange"
+              :allowAlertCreation="false"
+              searchType="dashboards"
+              @updated:dataZoom="onDataZoom"
+              @chart:contextmenu="handleChartContextMenu"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Context Menu -->
+    <AlertInsightsContextMenu
+      v-if="contextMenu.show"
+      :x="contextMenu.x"
+      :y="contextMenu.y"
+      :value="contextMenu.value"
+      :panel-title="contextMenu.panelTitle"
+      :panel-id="contextMenu.panelId"
+      @close="contextMenu.show = false"
+      @filter="handleContextMenuFilter"
+      @configure-dedup="handleConfigureDedup"
+      @edit-alert="handleEditAlert"
+      @view-history="handleViewHistory"
+    />
+  </div>
+</template>
+
+<script setup lang="ts">
+import OTabs from '@/lib/navigation/Tabs/OTabs.vue'
+import OTab from '@/lib/navigation/Tabs/OTab.vue'
+import OButton from '@/lib/core/Button/OButton.vue';
+import AppPageHeader from "@/components/common/AppPageHeader.vue";
+import { ref, computed, onMounted, watch, nextTick, reactive, provide } from "vue";
+import { useRouter, useRoute } from "vue-router";
+import { useStore } from "vuex";
+import { useI18n } from "vue-i18n";
+import RenderDashboardCharts from "@/views/Dashboards/RenderDashboardCharts.vue";
+import dateTime from "@/components/DateTimePickerDashboard.vue";
+import AlertInsightsContextMenu from "./AlertInsightsContextMenu.vue";
+import { useAlertInsights } from "@/composables/useAlertInsights";
+import { convertDashboardSchemaVersion } from "@/utils/dashboard/convertDashboardSchemaVersion";
+import insightsConfig from "@/utils/alerts/insights-metrics.json";
+import config from "@/aws-exports";
+import alertsService from "@/services/alerts";
+import OSpinner from "@/lib/feedback/Spinner/OSpinner.vue";
+import OTooltip from "@/lib/overlay/Tooltip/OTooltip.vue";
+import OSwitch from "@/lib/forms/Switch/OSwitch.vue";
+import OIcon from "@/lib/core/Icon/OIcon.vue";
+import { toast } from "@/lib/feedback/Toast/useToast";
+
+const router = useRouter();
+const route = useRoute();
+const store = useStore();
+const { t } = useI18n();
+
+// Check if enterprise features are enabled
+const isEnterprise = config.isEnterprise === "true";
+
+// Composable
+const {
+  rangeFilters,
+  showFailedOnly,
+  showSilencedOnly,
+  selectedAlertName,
+  addRangeFilter,
+  removeRangeFilter,
+  clearAllFilters: clearFiltersFromComposable,
+  getBaseFilters,
+} = useAlertInsights();
+
+// State
+const show = ref(true);
+const isLoading = ref(false);
+const dashboardRef = ref(null);
+const dateTimeRef = ref(null);
+const currentTab = ref("overview");
+const selectedAlertForAction = ref<string | null>(null);
+const dashboardData = ref<any>(null); // Store dashboard config as ref instead of computed
+const alertsList = ref<any[]>([]); // Cache alerts list
+
+// Provide selectedTabId to RenderDashboardCharts
+provide("selectedTabId", currentTab);
+
+// Context menu
+const contextMenu = reactive({
+  show: false,
+  x: 0,
+  y: 0,
+  value: 0,
+  panelTitle: "",
+  panelId: "",
+});
+
+// Date/Time
+const dateTimeType = ref("relative");
+const relativeTime = ref("24h");
+const now = Date.now();
+const oneDayAgo = now - 24 * 60 * 60 * 1000;
+const timeRange = ref({
+  __global: {
+    start_time: new Date(oneDayAgo),
+    end_time: new Date(now),
+  },
+});
+
+// Computed
+const hasActiveFilters = computed(() => {
+  return (
+    rangeFilters.value.size > 0 ||
+    showFailedOnly.value ||
+    showSilencedOnly.value ||
+    selectedAlertName.value
+  );
+});
+
+// Function to load dashboard data (replaces computed)
+const loadDashboard = () => {
+  // Deep clone to avoid mutating the original imported config
+  const config = convertDashboardSchemaVersion(JSON.parse(JSON.stringify(insightsConfig)));
+  const baseFilters = getBaseFilters();
+  const org = store.state.selectedOrganization.identifier;
+
+  // Find the current tab
+  const currentTabData = config.tabs?.find(
+    (tab: any) => tab.tabId === currentTab.value
+  );
+
+  if (!currentTabData) {
+    dashboardData.value = config;
+    return;
+  }
+
+  // Inject WHERE clause into all queries for the current tab
+  if (currentTabData.panels) {
+    currentTabData.panels = currentTabData.panels.map((panel: any) => {
+      if (panel.queries?.[0]) {
+        let query = panel.queries[0].query;
+
+        // Build base filters that always apply
+        // Note: module = 'alert' is now hardcoded in all queries in insights-metrics.json
+        const mandatoryFilters = [
+          `org = '${org}'`
+        ];
+
+        // Combine with user filters
+        const allFilters = [...mandatoryFilters, ...baseFilters];
+
+        // Build WHERE clause
+        let whereClause = "";
+        if (allFilters.length > 0) {
+          whereClause = `WHERE ${allFilters.join(" AND ")}`;
+        }
+
+        // Replace placeholders
+        query = query.replace(/\[WHERE_CLAUSE\]/g, whereClause);
+
+        // Handle [WHERE_CLAUSE_ADDITIONAL] for queries that already have WHERE
+        const additionalClause = allFilters.length > 0 ? `AND ${allFilters.join(" AND ")}` : "";
+        query = query.replace(/\[WHERE_CLAUSE_ADDITIONAL\]/g, additionalClause);
+
+        panel.queries[0].query = query;
+
+        // Update stream to query "triggers"
+        if (panel.queries[0].fields) {
+          panel.queries[0].fields.stream = "triggers";
+          panel.queries[0].fields.stream_type = "logs";
+        }
+      }
+      return panel;
+    });
+  }
+
+  const result = {
+    ...config,
+    tabs: [currentTabData],
+  };
+
+  dashboardData.value = result;
+};
+
+// Methods
+const fetchAlerts = async () => {
+  try {
+    const res = await alertsService.listByFolderId(
+      1,
+      10000, // Fetch all alerts
+      "name",
+      false,
+      "",
+      store.state.selectedOrganization.identifier,//store.state.selectedOrganization.identifier,
+      "", // Empty folder to get all alerts
+      ""
+    );
+    alertsList.value = res.data.list || [];
+  } catch (error) {
+    toast({
+      variant: "error",
+      message: "Failed to load alerts",
+    });
+  }
+};
+
+const goBack = () => {
+  router.push({ name: "alertList", query: { org_identifier: store.state.selectedOrganization.identifier } });
+};
+
+const updateDateTime = (value: any) => {
+  timeRange.value = {
+    __global: {
+      start_time: new Date(value.startTime ),
+      end_time: new Date(value.endTime ),
+    },
+  };
+
+  if (value.relativeTimePeriod) {
+    dateTimeType.value = "relative";
+    relativeTime.value = value.relativeTimePeriod;
+  } else {
+    dateTimeType.value = "absolute";
+  }
+
+  refreshDashboard();
+};
+
+const updateTimezone = (value: any) => {
+  // Handle timezone changes if needed
+  // Currently the date-time component manages timezone internally
+  // This is here for compatibility with the logs date picker
+};
+
+const refreshDashboard = async () => {
+  isLoading.value = true;
+  show.value = false;
+  loadDashboard(); // Rebuild dashboard config
+  await nextTick();
+  show.value = true;
+  await nextTick();
+  isLoading.value = false;
+};
+
+const onFilterChange = () => {
+  refreshDashboard();
+};
+
+const clearAllFilters = () => {
+  clearFiltersFromComposable();
+  refreshDashboard();
+};
+
+const onDataZoom = (data: any) => {
+  // Handle zoom on timeline
+  const { panelId, start, end } = data;
+
+  addRangeFilter({
+    panelId,
+    panelTitle: "Alert Volume Over Time",
+    start,
+    end,
+  });
+
+  refreshDashboard();
+};
+
+const handleNativeContextMenu = (event: MouseEvent) => {
+  // Only handle context menu on Frequency & Dedup tab
+  if (currentTab.value !== 'frequency') {
+    return; // Let other handlers or default behavior work
+  }
+
+  const target = event.target as HTMLElement;
+
+  // Find if we clicked on a table cell
+  const tableCell = target.closest('td');
+  if (!tableCell) {
+    return; // Not a table cell, let default behavior work
+  }
+
+  // Get the text content of the cell (this is the alert key)
+  const alertKey = tableCell.textContent?.trim();
+
+  // Extract alert name (remove the /unique_id part)
+  // Format: alert_name/unique_id -> alert_name
+  const alertName = alertKey?.split('/')[0];
+
+  // Check if this is the "Alert Key" column (first column in Dedup table)
+  const cellIndex = Array.from(tableCell.parentElement?.children || []).indexOf(tableCell);
+
+  // Only show context menu for the first column (Alert Key column)
+  if (cellIndex === 0 && alertName && alertName.length > 0) {
+    // ONLY prevent default if we're showing our custom menu
+    event.preventDefault();
+    event.stopPropagation();
+
+    // Find the panel title from dashboard data
+    const currentTabData = dashboardData.value?.tabs?.[0];
+    const dedupPanel = currentTabData?.panels?.find((p: any) =>
+      p.title?.includes('Dedup')
+    );
+
+    contextMenu.show = true;
+    contextMenu.x = event.clientX;
+    contextMenu.y = event.clientY;
+    contextMenu.value = alertName;
+    contextMenu.panelId = dedupPanel?.id || '';
+    contextMenu.panelTitle = dedupPanel?.title || 'Dedup Impact Analysis';
+  }
+  // If not first column or no alert name, let default context menu show
+};
+
+const handleChartContextMenu = (event: any) => {
+  const { x, y, value, panelId, panel } = event;
+
+  // Only show context menu for alert name panels
+  const alertNamePanels = [
+    "Panel_Alert_Frequency",
+    "Panel_Dedup_Impact",
+    "Panel_Alert_Correlation",
+    "Panel_Alert_Effectiveness",
+    "Panel_Retry_Analysis",
+    "Panel_Execution_Duration",
+  ];
+
+  // Only show context menu if it's an alert name panel with a string value
+  if (typeof value === "string" && alertNamePanels.includes(panelId)) {
+    contextMenu.show = true;
+    contextMenu.x = x;
+    contextMenu.y = y;
+    contextMenu.value = value;
+    contextMenu.panelId = panelId;
+    contextMenu.panelTitle = panel?.title || "";
+  }
+};
+
+const handleContextMenuFilter = (filter: any) => {
+  addRangeFilter({
+    panelId: filter.panelId,
+    panelTitle: filter.panelTitle,
+    start: filter.operator === ">=" ? filter.value : null,
+    end: filter.operator === "<=" ? filter.value : null,
+  });
+
+  contextMenu.show = false;
+  refreshDashboard();
+};
+
+const handleConfigureDedup = async (alertName: string) => {
+  try {
+    // Use cached alerts list
+    const alert = alertsList.value.find((a: any) => a.name === alertName);
+
+    if (!alert) {
+      toast({
+        variant: "error",
+        message: `Alert "${alertName}" not found in ${alertsList.value.length} alerts`,
+      });
+      return;
+    }
+
+    // Navigate to alert edit page with dedup section
+    await router.push({
+      name: "alertList",
+      query: {
+        action: "update",
+        alert_id: alert.alert_id, // Use alert_id instead of id
+        name: alert.name,
+        org_identifier: store.state.selectedOrganization.identifier,
+        folder: alert.folder_id || "default",
+        section: "dedup",
+      },
+    });
+  } catch (error) {
+    toast({
+      variant: "error",
+      message: "Failed to navigate to alert",
+    });
+  }
+};
+
+const handleEditAlert = async (alertName: string) => {
+  try {
+    // Use cached alerts list
+    const alert = alertsList.value.find((a: any) => a.name === alertName);
+
+    if (!alert) {
+      toast({
+        variant: "error",
+        message: "Alert not found",
+      });
+      return;
+    }
+
+    await router.push({
+      name: "alertList",
+      query: {
+        action: "update",
+        alert_id: alert.alert_id, // Use alert_id instead of id
+        name: alert.name,
+        org_identifier: store.state.selectedOrganization.identifier,
+        folder: alert.folder_id || "default",
+      },
+    });
+  } catch (error) {
+    toast({
+      variant: "error",
+      message: "Failed to navigate to alert",
+    });
+  }
+};
+
+const handleViewHistory = (alertName: string) => {
+  router.push({
+    name: "alertHistory",
+    query: {
+      alert_name: alertName,
+    },
+  });
+};
+
+const formatFilterValue = (value: number): string => {
+  if (value > 1000000) {
+    // Likely a timestamp
+    return new Date(value / 1000).toLocaleString();
+  }
+  return Math.round(value).toLocaleString();
+};
+
+// Action button methods
+const openDedupConfig = () => {
+  toast({
+    variant: "info",
+    message: `Opening dedup configuration for: ${selectedAlertForAction.value}`,
+    caption: "This would navigate to alert edit page with dedup section focused",
+  });
+
+  // TODO: Navigate to alert edit page with dedup section
+  // router.push({
+  //   name: 'alertEdit',
+  //   params: { alertName: selectedAlertForAction.value },
+  //   query: { section: 'dedup' }
+  // });
+};
+
+const editAlert = () => {
+  toast({
+    variant: "info",
+    message: `Editing alert: ${selectedAlertForAction.value}`,
+    caption: "This would navigate to alert edit page",
+  });
+
+  // TODO: Navigate to alert edit page
+  // router.push({
+  //   name: 'alertEdit',
+  //   params: { alertName: selectedAlertForAction.value }
+  // });
+};
+const org = 'default'
+const viewHistory = () => {
+  // Navigate to alert history with filter
+  router.push({
+    name: "alertHistory",
+    query: {
+      alert_name: selectedAlertForAction.value,
+    },
+  });
+};
+
+// Watch for tab changes
+watch(currentTab, async () => {
+  isLoading.value = true;
+  show.value = false;
+  loadDashboard(); // Rebuild dashboard config for new tab
+  await nextTick();
+  show.value = true;
+  await nextTick();
+  await nextTick();
+  window.dispatchEvent(new Event("resize"));
+  isLoading.value = false;
+});
+
+// Lifecycle
+onMounted(async () => {
+  // Check if there's a tab in query params
+  if (route.query.tab) {
+    currentTab.value = route.query.tab as string;
+  }
+
+  // Fetch alerts list once on mount
+  await fetchAlerts();
+
+  // Load initial dashboard data
+  loadDashboard();
+
+  isLoading.value = true;
+  await nextTick();
+  await nextTick();
+  isLoading.value = false;
+});
+</script>
+
+<style>
+.alert-insights-tabs :deep(.o-tab__label) {
+  text-transform: none !important;
+}
+</style>
